@@ -252,12 +252,6 @@ describe('Player', function() {
       var originalLoad = shaka.player.StreamVideoSource.prototype.load;
       shaka.player.StreamVideoSource.prototype.load = function(
           preferredLanguage) {
-        // This should force Chrome to evict data quickly after it is played.
-        // At this asset's bitrate, Chrome should only have enough buffer for
-        // 310 seconds of data.  Tweak the buffer time for audio, since this
-        // will take much less time and bandwidth to buffer.
-        const minBufferTime = 300;
-        this.manifestInfo.minBufferTime = minBufferTime;
         var sets = this.manifestInfo.periodInfos[0].streamSetInfos;
         var audioSet = sets[0].contentType == 'audio' ? sets[0] : sets[1];
         expect(audioSet.contentType).toBe('audio');
@@ -266,10 +260,30 @@ describe('Player', function() {
         return originalLoad.call(this, preferredLanguage);
       };
 
+      // Restore the player settings when the test has completed.
+      var restorePlayer = (function (initialBufferSize, bufferSize) {
+        return function () {
+          // Replace the StreamVideoSource shim.
+          shaka.player.StreamVideoSource.prototype.load = originalLoad;
+
+          player.setInitialStreamBufferSize(initialBufferSize);
+          player.setStreamBufferSize(bufferSize);
+        };
+      })(
+          shaka.media.Stream.initialBufferSizeSeconds,
+          shaka.media.Stream.bufferSizeSeconds
+      );
+
       var audioStreamBuffer;
+
+      // This should force Chrome to evict data quickly after it is played.
+      // At this asset's bitrate, Chrome should only have enough buffer for
+      // 310 seconds of data.  Tweak the buffer time for audio, since this
+      // will take much less time and bandwidth to buffer.
+      player.setStreamBufferSize(300);
+      player.setInitialStreamBufferSize(1);
+
       player.load(source).then(function() {
-        // Replace the StreamVideoSource shim.
-        shaka.player.StreamVideoSource.prototype.load = originalLoad;
         // Locate the audio stream buffer.
         var audioStream = source.streamsByType_['audio'];
         audioStreamBuffer = audioStream.sbm_.sourceBuffer_;
@@ -295,10 +309,10 @@ describe('Player', function() {
         // Expect to play some.
         return waitForTargetTime(video, eventManager, 0.5, 2.0);
       }).then(function() {
+        restorePlayer();
         done();
       }).catch(function(error) {
-        // Replace the StreamVideoSource shim.
-        shaka.player.StreamVideoSource.prototype.load = originalLoad;
+        restorePlayer();
         fail(error);
         done();
       });
@@ -701,6 +715,77 @@ describe('Player', function() {
       player.setStreamBufferSize(original);
       expect(player.getStreamBufferSize()).toEqual(original);
     });
+  });
+
+  it('sets initial buffer size on streams', function(done) {
+    player.setInitialStreamBufferSize(25);
+
+    var mediaSource = new MediaSource();
+    video.src = window.URL.createObjectURL(mediaSource);
+    mediaSource.addEventListener('sourceopen', function() {
+      var buffer = mediaSource.addSourceBuffer(
+          'video/mp4; codecs="avc1.4d4015"');
+      var stream = new shaka.media.Stream(
+          player, video, mediaSource, buffer, estimator);
+      expect(shaka.media.Stream.initialBufferSizeSeconds).toEqual(25);
+      video.src = '';
+      player.setInitialStreamBufferSize(0);
+      done();
+    });
+  });
+
+  it('uses the maximum initial buffer time from manifest', function (done) {
+    var source = newSource(highBitrateManifest);
+    // Create a temporary shim to intercept and modify manifest info.
+    var originalLoad = shaka.player.StreamVideoSource.prototype.load;
+    shaka.player.StreamVideoSource.prototype.load = function(
+        preferredLanguage) {
+      this.manifestInfo.minBufferTime = 180;
+      return originalLoad.call(this, preferredLanguage);
+    };
+
+    player.setInitialStreamBufferSize(25);
+
+    player.load(source).then(function() {
+      // Replace the StreamVideoSource shim.
+      shaka.player.StreamVideoSource.prototype.load = originalLoad;
+
+      expect(shaka.media.Stream.initialBufferSizeSeconds).toEqual(180);
+      player.setInitialStreamBufferSize(0);
+      done();
+    });
+  });
+
+  it('uses the maximum initial buffer time from setInitialStreamBufferSize()', function (done) {
+    var source = newSource(highBitrateManifest);
+    // Create a temporary shim to intercept and modify manifest info.
+    var originalLoad = shaka.player.StreamVideoSource.prototype.load;
+    shaka.player.StreamVideoSource.prototype.load = function(
+        preferredLanguage) {
+      this.manifestInfo.minBufferTime = 3;
+      return originalLoad.call(this, preferredLanguage);
+    };
+
+    player.setInitialStreamBufferSize(25);
+
+    player.load(source).then(function() {
+      // Replace the StreamVideoSource shim.
+      shaka.player.StreamVideoSource.prototype.load = originalLoad;
+
+      expect(shaka.media.Stream.initialBufferSizeSeconds).toEqual(25);
+      player.setInitialStreamBufferSize(0);
+      done();
+    }).catch(function(error) {
+      fail(error);
+      done();
+    });
+  });
+
+  it('gets initial streams buffer size', function() {
+    player.setInitialStreamBufferSize(10);
+    expect(player.getInitialStreamBufferSize()).toEqual(10);
+    player.setInitialStreamBufferSize(20);
+    expect(player.getInitialStreamBufferSize()).toEqual(20);
   });
 
   describe('setLicenseRequestTimeout', function() {
