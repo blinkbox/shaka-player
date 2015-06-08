@@ -703,6 +703,17 @@ describe('Player', function() {
     });
   });
 
+  describe('switch stream buffer size', function() {
+    it('sets switch buffer size on streams', function() {
+      var original = shaka.media.Stream.switchBufferSizeSeconds;
+      player.setSwitchStreamBufferSize(5);
+      expect(shaka.media.Stream.switchBufferSizeSeconds).toEqual(5);
+      player.setSwitchStreamBufferSize(15);
+      expect(shaka.media.Stream.switchBufferSizeSeconds).toEqual(15);
+      shaka.media.Stream.switchBufferSizeSeconds = original;
+    });
+  });
+
   describe('setLicenseRequestTimeout', function() {
     it('set timeout on LicenseRequests', function() {
       player.setLicenseRequestTimeout(5);
